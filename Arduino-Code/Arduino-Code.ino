@@ -1,90 +1,86 @@
-const byte outputOnePin = 5; //D1
+// ----------- Pin-Definitionen -----------
+const byte selectVideo = 5;  // D1 Outputschalter Coax | High = Rechts | Low = Links
+const byte selectRadio = 14; // D5 Output zu Radio | High = Rückfahr-Modus an
+const byte selectCamera = 12; // D6 Taster zur Kamera-Auswahl
+const byte activateFront = 15; // D7 Signal zur Aktivierung der Frontkamera
+const byte rearSignalIn = 4;   // D2 Eingangssignal vom Rückwärtsgang
 
-const byte outputTwoPin = 14; //D5 Temp Vorne
-const byte outputThreePin = 16; //D0 Temp Hinten
+// ----------- Variablen für die Logik -----------
+bool lastSelectCameraState = LOW;
+bool lastActivateFrontState = LOW;
+bool selectVideoState = LOW;
 
-const byte inputOnePin = 12; //D6 Knopf
-const byte inputTwoPin = 13; //D7 Knopf
-const byte inputThreePin = 4; //D2 Rückfahr
-
-const unsigned long multi = 1000;
-const unsigned long seconds  = 10;
-
-unsigned long duration = multi * seconds;
-unsigned long startMillis = 0;
-
-bool functionActive = false;
-bool buttonPressed = false;
-bool camera = false; //Vorne = True, Heck = Fals
+// ----------- Timer-Variablen -----------
+unsigned long radioSignalStopTime = 0;
+const long nachlaufzeit = 10000; // 10 Sekunden in Millisekunden
 
 void setup() {
   Serial.begin(9600);
-  pinMode(outputOnePin, OUTPUT);
-  pinMode(outputTwoPin, OUTPUT);
-  pinMode(outputThreePin, OUTPUT);
 
-  pinMode(inputOnePin, INPUT);
-  pinMode(inputTwoPin, INPUT);
-  pinMode(inputThreePin, INPUT);
+  // Ausgänge definieren und auf Startzustand LOW setzen
+  pinMode(selectVideo, OUTPUT);
+  pinMode(selectRadio, OUTPUT);
+  digitalWrite(selectVideo, LOW);
+  digitalWrite(selectRadio, LOW);
 
-  selectCam();
+  // Eingänge definieren
+  pinMode(selectCamera, INPUT);
+  pinMode(activateFront, INPUT);
+  pinMode(rearSignalIn, INPUT);
+
+  Serial.println("Setup abgeschlossen. Logik mit Timer-Verlängerung geladen.");
 }
 
 void loop() {
-  if (digitalRead(inputOnePin) == HIGH || digitalRead(inputThreePin) == HIGH) {
-    if (!functionActive) {
-      Serial.println("Taster gedrückt");
-      if(digitalRead(inputOnePin) == HIGH){
-        camera = true; //Vorne = True, Heck = Fals
-      }else if (digitalRead(inputThreePin) == HIGH){
-        camera = false; //Vorne = True, Heck = Fals
+  // 1. Aktuellen Zustand aller Eingänge einlesen
+  bool rearActive = digitalRead(rearSignalIn);
+  bool frontActive = digitalRead(activateFront);
+  bool cameraSelectPressed = digitalRead(selectCamera);
+
+  // 2. Logik für Radio-Aktivierung (selectRadio) - Der Master-Schalter
+  if (rearActive || frontActive) {
+    digitalWrite(selectRadio, HIGH);
+    radioSignalStopTime = millis(); // Nachlauf-Timer zurücksetzen
+  }
+
+  // 3. Logik für Video-Umschaltung und Timer-Verlängerung
+  if (digitalRead(selectRadio) == HIGH) {
+    
+    // EREIGNIS 1: Front-Aktivierung wird gedrückt (setzt Video auf HIGH)
+    if (frontActive && !lastActivateFrontState) {
+      selectVideoState = HIGH;
+      Serial.println("Front aktiviert -> Video auf HIGH gesetzt.");
+    }
+    // EREIGNIS 2: Kamera-Wahltaster wird gedrückt
+    else if (cameraSelectPressed && !lastSelectCameraState) {
+      // Aktion a): Video-Zustand immer umschalten (toggle)
+      selectVideoState = !selectVideoState;
+      Serial.print("Kamerataster gedrückt. Video-Status ist jetzt: ");
+      Serial.println(selectVideoState ? "HIGH" : "LOW");
+      
+      // NEU - Aktion b): Timer verlängern, falls wir in der Nachlaufphase sind
+      // Wir prüfen, ob die Haupt-Auslöser (rear, front) aus sind.
+      if (!rearActive && !frontActive) {
+        radioSignalStopTime = millis(); // Timer auf 10s zurücksetzen
+        Serial.println("Nachlaufzeit durch Kamerataste neu gestartet!");
       }
     }
-    functionActive = true;
-    startMillis = millis();
   }
 
+  // 4. Finalen Zustand auf die Ausgänge schreiben
+  digitalWrite(selectVideo, selectVideoState);
 
-
-
-  if (functionActive && (millis() - startMillis >= duration)) {
-    functionActive = false; // Funktion beenden
-    digitalWrite(outputOnePin, LOW);
-    camera = false; //Vorne = True, Heck = Fals
-    Serial.println("Funktion gestoppt.");
-    // Hier können Sie zusätzlichen Code einfügen, der einmal beim Beenden der Funktion ausgeführt werden soll
-  }
-
-  if (functionActive) {
-
-    if (digitalRead(inputTwoPin) == HIGH && !buttonPressed){
-      buttonPressed = true;
-      if (camera){
-        camera = false; //Vorne = True, Heck = Fals
-      }else{
-        camera = true; //Vorne = True, Heck = Fals
-      }
-
-    }else if (digitalRead(inputTwoPin == LOW)){
-      buttonPressed = false;
+  // 5. Logik für die Master-Abschaltung (10s Nachlaufzeit des Radios)
+  if (digitalRead(selectRadio) == HIGH && !rearActive && !frontActive) {
+    if (millis() - radioSignalStopTime > nachlaufzeit) {
+      Serial.println("Master-Nachlaufzeit beendet. Alles aus.");
+      digitalWrite(selectRadio, LOW);
+      digitalWrite(selectVideo, LOW);
+      selectVideoState = LOW;
     }
-
-    digitalWrite(outputOnePin, HIGH); // LED einschalten (oder andere Aktionen)
-    selectCam();
-    delay(100);
-
-
   }
 
-}
-
-
-void selectCam(){
-    if (camera){
-      digitalWrite(outputTwoPin, HIGH);
-      digitalWrite(outputThreePin, LOW);
-    }else{
-      digitalWrite(outputTwoPin, LOW);
-      digitalWrite(outputThreePin, HIGH);
-    }
+  // 6. Letzte Zustände für den nächsten Durchlauf speichern
+  lastSelectCameraState = cameraSelectPressed;
+  lastActivateFrontState = frontActive;
 }
